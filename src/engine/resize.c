@@ -3,13 +3,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void box_downscale(const uint8_t* src, int sw, int sh, int dw, int dh, uint8_t* dst)
+static void downscale(const uint8_t* src, int sw, int sh, int dw, int dh, uint8_t* dst)
 {
-    /* FFmpeg's assembly-optimized fast bilinear scaler */
+    /* Lanczos: thumbnails are often reduced 8x or more (e.g. 4096 -> 512
+     * for HEIC, which has no decode-time scaling like JPEG). Fast bilinear
+     * only samples a few source pixels per output pixel at such ratios,
+     * which aliases fine detail into jagged, noisy edges; Lanczos matches
+     * an ideal downscale (~40ms for 12MP vs ~4ms, on worker threads). */
     struct SwsContext* sws = sws_getContext(
         sw, sh, AV_PIX_FMT_RGBA,
         dw, dh, AV_PIX_FMT_RGBA,
-        SWS_FAST_BILINEAR, NULL, NULL, NULL);
+        SWS_LANCZOS, NULL, NULL, NULL);
 
     if (sws) {
         const uint8_t* src_data[4] = { src, NULL, NULL, NULL };
@@ -50,6 +54,6 @@ void resize_to_fit(const image_t* src, int max_w, int max_h, image_t* out)
     if (dw == src->width && dh == src->height) {
         memcpy(out->pixels, src->pixels, (size_t)dw * dh * 4);
     } else {
-        box_downscale(src->pixels, src->width, src->height, dw, dh, out->pixels);
+        downscale(src->pixels, src->width, src->height, dw, dh, out->pixels);
     }
 }

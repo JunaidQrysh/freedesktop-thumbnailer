@@ -5,6 +5,7 @@
  * next available frame, and convert it to RGBA via libswscale. Single
  * decode path always - no embedded-art pre-check tier for video. */
 #include "formats.h"
+#include "sws_color.h"
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/imgutils.h>
@@ -66,6 +67,7 @@ int decode_video(const char* path, image_t* out, int target_box)
                         w, h, (enum AVPixelFormat)frame->format,
                         w, h, AV_PIX_FMT_RGBA,
                         SWS_BILINEAR, NULL, NULL, NULL);
+                    sws_set_frame_colorspace(sws, frame, codec_ctx);
                     if (sws) {
                         /* sws_scale's SIMD (SSE/AVX) write paths can write
                          * a few bytes past the end of each row for certain

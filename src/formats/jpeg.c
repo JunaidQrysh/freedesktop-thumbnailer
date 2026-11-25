@@ -94,14 +94,17 @@ int decode_jpeg(const char* path, image_t* out, int target_box)
     int true_h = (int)cinfo.image_height;
 
     /* Use libjpeg's built-in DCT-domain scaling to decode directly at a
-     * smaller size when the source is much bigger than what we need. */
+     * smaller size when the source is much bigger than what we need.
+     * Keep at least 2x the target size: DCT scaling is close to a box
+     * filter (1/8 is just the DC of each 8x8 block), so the last 2x is
+     * left to the Lanczos resize, which keeps thumbnails sharp. */
     unsigned int denom = 1;
     static const unsigned int candidates[] = { 8, 4, 2 };
     for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
         unsigned int d = candidates[i];
         int scaled_w = (true_w + (int)d - 1) / (int)d;
         int scaled_h = (true_h + (int)d - 1) / (int)d;
-        if (scaled_w >= target_box || scaled_h >= target_box) {
+        if (scaled_w >= 2 * target_box || scaled_h >= 2 * target_box) {
             denom = d;
             break;
         }

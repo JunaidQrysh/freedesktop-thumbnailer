@@ -2,6 +2,7 @@
 #include "exif_apply.h"
 #include "formats.h"
 #include "isobmff.h"
+#include "sws_color.h"
 #include "tiff_ifd.h"
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -480,6 +481,7 @@ static int decode_heic_full_hw(AVFormatContext* fmt_ctx, AVBufferRef* hw_device_
                         w, h, (enum AVPixelFormat)src->format,
                         w, h, AV_PIX_FMT_RGBA,
                         SWS_BILINEAR, NULL, NULL, NULL);
+                    sws_set_frame_colorspace(sws, frame, codec_ctx);
                     if (sws) {
                         if (av_image_alloc(padded_data, padded_linesize,
                                 w, h, AV_PIX_FMT_RGBA, 32)
@@ -629,6 +631,7 @@ static int drain_slot(decode_slot_t* slot, const AVStreamGroupTileGrid* grid,
         slot->sws_w = tw;
         slot->sws_h = th;
         slot->sws_fmt = (enum AVPixelFormat)src->format;
+        sws_set_frame_colorspace(slot->sws, frame, slot->codec_ctx);
     }
 
     if (slot->sws) {
