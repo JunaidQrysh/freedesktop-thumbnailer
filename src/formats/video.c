@@ -1,15 +1,41 @@
 /* Video thumbnail: open with libavformat, find the best video stream,
- * seek to ~10% into the duration (a frame at time 0 is very often a
- * black/blank slate for real-world video, so a small offset in tends to
- * give a much more representative thumbnail), decode forward to the
- * next available frame, and convert it to RGBA via libswscale. Single
- * decode path always - no embedded-art pre-check tier for video. */
+ * decode the first available frame from the start of the stream, and
+ * convert it to RGBA via libswscale. Single decode path always - no
+ * embedded-art pre-check tier for video. */
+#include "exif_apply.h"
 #include "formats.h"
 #include "sws_color.h"
+#include <math.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/display.h>
 #include <libavutil/imgutils.h>
 #include <libswscale/swscale.h>
+
+/* Phone cameras store frames in sensor (landscape) orientation and put
+ * the intended display rotation in a display matrix side-data entry on
+ * the stream. Map it to the equivalent EXIF orientation value so the
+ * shared exif_apply_orientation() helper can rotate the decoded frame. */
+static int video_orientation(const AVStream* stream)
+{
+    const AVPacketSideData* sd = av_packet_side_data_get(
+        stream->codecpar->coded_side_data, stream->codecpar->nb_coded_side_data,
+        AV_PKT_DATA_DISPLAYMATRIX);
+    if (!sd || sd->size < 9 * sizeof(int32_t))
+        return 1;
+    /* av_display_rotation_get is counter-clockwise; negate for the
+     * clockwise rotation needed for display (same as ffmpeg's autorotate) */
+    double theta = -av_display_rotation_get((const int32_t*)sd->data);
+    if (isnan(theta))
+        return 1;
+    int deg = ((int)lround(theta / 90.0) * 90 % 360 + 360) % 360;
+    switch (deg) {
+    case 90: return 6;
+    case 180: return 3;
+    case 270: return 8;
+    default: return 1;
+    }
+}
 
 int decode_video(const char* path, image_t* out, int target_box)
 {
@@ -45,13 +71,6 @@ int decode_video(const char* path, image_t* out, int target_box)
         avcodec_free_context(&codec_ctx);
         avformat_close_input(&fmt_ctx);
         return -1;
-    }
-
-    /* seek ~10% into the stream, best-effort - if duration is unknown or
-     * the seek fails, just proceed reading from wherever we are (start) */
-    if (fmt_ctx->duration > 0) {
-        int64_t seek_target = fmt_ctx->duration / 10;
-        av_seek_frame(fmt_ctx, -1, seek_target, AVSEEK_FLAG_BACKWARD);
     }
 
     AVPacket* pkt = av_packet_alloc();
@@ -101,6 +120,7 @@ int decode_video(const char* path, image_t* out, int target_box)
                                 out->source_width = w;
                                 out->source_height = h;
                                 out->path = PATH_FULL_DECODE;
+                                exif_apply_orientation(out, video_orientation(stream));
                                 result = 1;
                             }
                             av_freep(&padded_data[0]);
