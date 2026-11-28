@@ -288,23 +288,35 @@ static double now_seconds(void)
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
+/* Value of the Software tEXt chunk we write into every thumbnail. Also
+ * used to tell our thumbnails apart from ones other programs (Dolphin's
+ * ffmpegthumbs, GNOME's thumbnailers, ...) wrote into the shared cache. */
+#define THUMB_SOFTWARE "thumbnailer v1"
+
 /* Checks whether a valid (URI+MTime matching) thumbnail/marker already
- * exists at `png_path`. Returns 1 if valid (skip regeneration), 0
- * otherwise. */
-static int existing_thumbnail_is_valid(const char* png_path, const char* uri, const char* mtime_str)
+ * exists at `png_path`. If `require_ours` is set, the file must also carry
+ * our Software tag - thumbnails written by other programs into the shared
+ * size directories are treated as stale so we overwrite them. (Fail
+ * markers live in our own fail/thumbnailer-v1 directory, so they don't
+ * need the check.) Returns 1 if valid (skip regeneration), 0 otherwise. */
+static int existing_thumbnail_is_valid(const char* png_path, const char* uri, const char* mtime_str, int require_ours)
 {
-    kv_pair_t kv[8];
-    int n = png_read_text_chunks(png_path, kv, 8);
+    kv_pair_t kv[16];
+    int n = png_read_text_chunks(png_path, kv, 16);
     if (n <= 0)
         return 0;
 
-    const char *found_uri = NULL, *found_mtime = NULL;
+    const char *found_uri = NULL, *found_mtime = NULL, *found_software = NULL;
     for (int i = 0; i < n; i++) {
         if (strcmp(kv[i].key, "Thumb::URI") == 0)
             found_uri = kv[i].value;
-        if (strcmp(kv[i].key, "Thumb::MTime") == 0)
+        else if (strcmp(kv[i].key, "Thumb::MTime") == 0)
             found_mtime = kv[i].value;
+        else if (strcmp(kv[i].key, "Software") == 0)
+            found_software = kv[i].value;
     }
+    if (require_ours && !(found_software && strcmp(found_software, THUMB_SOFTWARE) == 0))
+        return 0;
     return found_uri && found_mtime && strcmp(found_uri, uri) == 0 && strcmp(found_mtime, mtime_str) == 0;
 }
 
@@ -394,7 +406,7 @@ static void process_one_file(worker_ctx_t* ctx, const char* path)
     snprintf(success_path, sizeof(success_path), "%s/%s.png", size_dir, hash);
     snprintf(fail_path, sizeof(fail_path), "%s/%s.png", fail_dir, hash);
 
-    if (existing_thumbnail_is_valid(success_path, uri, mtime_str) || existing_thumbnail_is_valid(fail_path, uri, mtime_str)) {
+    if (existing_thumbnail_is_valid(success_path, uri, mtime_str, 1) || existing_thumbnail_is_valid(fail_path, uri, mtime_str, 0)) {
         char key[40];
         snprintf(key, sizeof(key), "%s (cached)", ext);
         stats_record_count(key);
@@ -471,7 +483,7 @@ static void process_one_file(worker_ctx_t* ctx, const char* path)
         n_kv++;
     }
     strcpy(kv[n_kv].key, "Software");
-    strcpy(kv[n_kv].value, "thumbnailer v1");
+    strcpy(kv[n_kv].value, THUMB_SOFTWARE);
     n_kv++;
 
     int write_rc = atomic_write_png(size_dir, hash, resized.pixels, resized.width, resized.height, kv, n_kv);
